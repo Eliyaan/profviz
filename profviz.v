@@ -109,7 +109,6 @@ fn main() {
 	app.task_chan.close()
 }
 
-@[live]
 fn on_frame(mut app App) {
 	s := app.ctx.window_size()
 	app.ctx.begin()
@@ -183,7 +182,6 @@ fn on_frame(mut app App) {
 	app.ctx.end()
 }
 
-@[live]
 fn on_event(e &gg.Event, mut app App) {
 	match e.typ {
 		.mouse_up {
