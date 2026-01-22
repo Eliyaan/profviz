@@ -38,12 +38,27 @@ const line_cfg = gg.TextCfg{
 }
 
 struct ProcessFile {
-	file_idx int
+	file_path string
+}
+
+struct PfData {
+mut:
+	file_lines [][]Data
+	sort_order []Order
+	max_l      []int
+	max_t      f32
 }
 
 struct SortFile {
-	file_idx   int
+	file_idx   int // sent back to know which file to update
+	file_lines [][]Data
 	column_idx int
+	order      Order
+}
+
+struct SfData {
+	file_idx   int
+	file_lines [][]Data
 }
 
 enum Order {
@@ -62,10 +77,13 @@ mut:
 	file_lines_max_t      []f32   // max time found
 	current_file          int
 	scroll_y              int
-	task_chan             chan Task = chan Task{cap: 100}
+	pf_chan               chan ProcessFile = chan ProcessFile{cap: 100}
+	pf_data_chan          chan PfData      = chan PfData{cap: 100}
+	sf_chan               chan SortFile    = chan SortFile{cap: 100}
+	sf_data_chan          chan SfData      = chan SfData{cap: 100}
 }
 
-type Data = string | int | f32
+type Data = string | int | f32 // TODO change this to: []string | []int | []f32
 
 fn (d Data) str() string {
 	return match d {
@@ -74,8 +92,6 @@ fn (d Data) str() string {
 		f32 { d.str() }
 	}
 }
-
-type Task = ProcessFile | SortFile
 
 fn main() {
 	mut fp := flag.new_flag_parser(os.args)
@@ -88,6 +104,7 @@ fn main() {
 	app.ctx = gg.new_context(
 		create_window: true
 		window_title:  'Profviz'
+		ui_mode:       true
 		user_data:     app
 		frame_fn:      on_frame
 		event_fn:      on_event
@@ -100,16 +117,33 @@ fn main() {
 		println(fp.usage())
 		exit(1)
 	}
-	for idx, _ in app.file_paths {
-		app.task_chan <- ProcessFile{idx}
+
+	spawn task_processor(app.pf_chan, app.pf_data_chan, app.sf_chan, app.sf_data_chan)
+
+	for f in app.file_paths {
+		app.pf_chan <- ProcessFile{f}
 	}
 
-	spawn task_processor(mut app)
 	app.ctx.run()
-	app.task_chan.close()
+	app.pf_chan.close()
+	app.pf_data_chan.close()
+	app.sf_chan.close()
+	app.sf_data_chan.close()
 }
 
 fn on_frame(mut app App) {
+	select {
+		pf_data := <-app.pf_data_chan {
+			app.file_lines << pf_data.file_lines
+			app.file_lines_sort_order << pf_data.sort_order
+			app.file_lines_max_l << pf_data.max_l
+			app.file_lines_max_t << pf_data.max_t
+		}
+		sf_data := <-app.sf_data_chan {
+			app.file_lines[sf_data.file_idx] = sf_data.file_lines
+		}
+		else {}
+	}
 	s := app.ctx.window_size()
 	app.ctx.begin()
 	if app.current_file >= app.file_lines.len {
@@ -191,7 +225,14 @@ fn on_event(e &gg.Event, mut app App) {
 					for i, _ in columns {
 						c_offset_x += app.file_lines_max_l[app.current_file][i] * text_size / 2
 						if e.mouse_x < c_offset_x {
-							app.task_chan <- SortFile{app.current_file, i}
+							old_order := app.file_lines_sort_order[app.current_file][i]
+							app.file_lines_sort_order[app.current_file][i] = if old_order == .asc {
+								Order.desc
+							} else {
+								Order.asc
+							}
+							order := app.file_lines_sort_order[app.current_file][i]
+							app.sf_chan <- SortFile{app.current_file, app.file_lines[app.current_file], i, order}
 							return
 						}
 					}
@@ -216,90 +257,74 @@ fn on_event(e &gg.Event, mut app App) {
 	}
 }
 
-fn task_processor(mut app App) {
+fn task_processor(pf_chan chan ProcessFile, pf_data_chan chan PfData, sf_chan chan SortFile, sf_data_chan chan SfData) {
 	for {
 		if select {
-			task := <-app.task_chan {
-				match task {
-					ProcessFile {
-						idx := app.file_lines.len
-						app.file_lines << (os.read_lines(app.file_paths[task.file_idx]) or {
-							['The file was either empty or did not exist']
-						}).map([Data(it)])
-						app.file_lines_max_l << []int{len: columns.len}
-						app.file_lines_sort_order << []Order{len: columns.len}
-						app.file_lines_max_t << 0
-						if app.file_lines[idx].len > 1 { // If the file is not an error
-							for mut l in app.file_lines[idx] {
-								l = (l[0] as string).split_by_space().map(Data(it))
-								for l.len < columns.len {
-									l << incomplete
-								}
-								for i, mut max in app.file_lines_max_l[idx] {
-									max = int_max(max, (l[i] as string).len)
-								}
-								l[0] = (l[0] as string).int()
-								l[1] = (l[1] as string)#[..-2].f32()
-								app.file_lines_max_t[idx] = f32_max(app.file_lines_max_t[idx],
-									l[1] as f32)
-								l[2] = (l[2] as string)#[..-2].f32()
-								l[3] = (l[3] as string)#[..-2].int()
+			task := <-pf_chan {
+				mut pf_data := PfData{}
+				raw_file_lines := os.read_lines(task.file_path) or { continue }
+				pf_data.max_l = []int{len: columns.len}
+				pf_data.sort_order = []Order{len: columns.len}
+				pf_data.max_t = 0
+				for line in raw_file_lines {
+					mut l := line.split_by_space().map(Data(it))
+					if l.len != columns.len {
+						continue
+					}
+					for i, mut max in pf_data.max_l {
+						max = int_max(max, (l[i] as string).len)
+					}
+					l[0] = (l[0] as string).int()
+					l[1] = (l[1] as string)#[..-2].f32()
+					pf_data.max_t = f32_max(pf_data.max_t, l[1] as f32)
+					l[2] = (l[2] as string)#[..-2].f32()
+					l[3] = (l[3] as string)#[..-2].int()
+					pf_data.file_lines << l
+				}
+				for i, mut max in pf_data.max_l {
+					max = int_max(max, columns[i].len)
+				}
+				pf_data_chan <- pf_data
+			}
+			task := <-sf_chan {
+				if task.column_idx < columns.len {
+					sf_data_chan <- SfData{task.file_idx, task.file_lines.sorted_with_compare(fn [task] (mut _a []Data, mut _b []Data) int {
+						a := if task.order == .asc {
+							_a[task.column_idx]
+						} else {
+							_b[task.column_idx]
+						}
+						b := if task.order == .asc {
+							_b[task.column_idx]
+						} else {
+							_a[task.column_idx]
+						}
+						if a is int && b is int {
+							if a < b {
+								return -1
 							}
-							for i, mut max in app.file_lines_max_l[idx] {
-								max = int_max(max, columns[i].len)
+							if a > b {
+								return 1
 							}
 						}
-					}
-					SortFile {
-						if task.file_idx >= 0 && task.file_idx < app.file_lines.len {
-							if task.column_idx < columns.len {
-								old_order := app.file_lines_sort_order[task.file_idx][task.column_idx]
-								app.file_lines_sort_order[task.file_idx][task.column_idx] = if old_order == .asc {
-									Order.desc
-								} else {
-									Order.asc
-								}
-								order := app.file_lines_sort_order[task.file_idx][task.column_idx]
-								app.file_lines[task.file_idx].sort_with_compare(fn [task, order] (mut _a []Data, mut _b []Data) int {
-									a := if order == .asc {
-										_a[task.column_idx]
-									} else {
-										_b[task.column_idx]
-									}
-									b := if order == .asc {
-										_b[task.column_idx]
-									} else {
-										_a[task.column_idx]
-									}
-									if a is int && b is int {
-										if a < b {
-											return -1
-										}
-										if a > b {
-											return 1
-										}
-									}
-									if a is string && b is string {
-										if a < b {
-											return -1
-										}
-										if a > b {
-											return 1
-										}
-									}
-									if a is f32 && b is f32 {
-										if a < b {
-											return -1
-										}
-										if a > b {
-											return 1
-										}
-									}
-									return 0
-								})
+						if a is string && b is string {
+							if a < b {
+								return -1
+							}
+							if a > b {
+								return 1
 							}
 						}
-					}
+						if a is f32 && b is f32 {
+							if a < b {
+								return -1
+							}
+							if a > b {
+								return 1
+							}
+						}
+						return 0
+					})}
 				}
 			}
 			else {
