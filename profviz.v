@@ -214,7 +214,7 @@ fn on_event(e &gg.Event, mut app App) {
 					mut c_offset_x := 0
 					for i, _ in columns {
 						c_offset_x += app.file_lines_max_l[app.current_file][i] * text_size / 2
-						if e.mouse_x < c_offset_x {
+						if e.mouse_x < c_offset_x + text_size {
 							old_order := app.file_lines_sort_order[app.current_file][i]
 							app.file_lines_sort_order[app.current_file][i] = if old_order == .asc {
 								Order.desc
