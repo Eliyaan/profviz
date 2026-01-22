@@ -287,8 +287,8 @@ fn task_processor(pf_chan chan ProcessFile, pf_data_chan chan PfData, sf_chan ch
 							aaa[task.column_idx]
 						}
 						if task.column_idx == 0 || task.column_idx == 3 {
-							a := aa#[..-2].int()
-							b := bb#[..-2].int()
+							a := aa.int()
+							b := bb.int()
 							if a < b {
 								return -1
 							}
