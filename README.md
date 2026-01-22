@@ -1,8 +1,16 @@
 # Profviz
 
+A visualizer for V profile files.
+
+### Compilation
+
+Install V, clone the profviz repo and in the folder compile the project with `v -prod .`.
+
+### Usage
+
 How to use it: 
 
-First profile your code with `v -prof prof_output1 run .`
+First profile your code with `v -prof prof_output1 run .` (pass `-cc gcc` if you want accurate timing informations for multithreaded programs).
 
 Then run profviz:  `profviz prof_output1` 
 
