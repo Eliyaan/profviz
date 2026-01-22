@@ -43,7 +43,7 @@ struct ProcessFile {
 
 struct PfData {
 mut:
-	file_lines [][]Data
+	file_lines [][]string
 	sort_order []Order
 	max_l      []int
 	max_t      f32
@@ -51,14 +51,14 @@ mut:
 
 struct SortFile {
 	file_idx   int // sent back to know which file to update
-	file_lines [][]Data
+	file_lines [][]string
 	column_idx int
 	order      Order
 }
 
 struct SfData {
 	file_idx   int
-	file_lines [][]Data
+	file_lines [][]string
 }
 
 enum Order {
@@ -71,7 +71,7 @@ struct App {
 mut:
 	ctx                   &gg.Context = unsafe { nil }
 	file_paths            []string
-	file_lines            [][][]Data
+	file_lines            [][][]string
 	file_lines_sort_order [][]Order
 	file_lines_max_l      [][]int // max lenght of each column
 	file_lines_max_t      []f32   // max time found
@@ -81,16 +81,6 @@ mut:
 	pf_data_chan          chan PfData      = chan PfData{cap: 100}
 	sf_chan               chan SortFile    = chan SortFile{cap: 100}
 	sf_data_chan          chan SfData      = chan SfData{cap: 100}
-}
-
-type Data = string | int | f32 // TODO change this to: []string | []int | []f32
-
-fn (d Data) str() string {
-	return match d {
-		string { d }
-		int { d.str() }
-		f32 { d.str() }
-	}
 }
 
 fn main() {
@@ -191,14 +181,14 @@ fn on_frame(mut app App) {
 				for i, lelem in fl {
 					off_x_inc := app.file_lines_max_l[app.current_file][i] * text_size / 2
 					offset_x += off_x_inc
-					app.ctx.draw_text(rect_radius + offset_x, y, lelem.str(), line_cfg)
-					if i == 1 && lelem is f32 {
-						fact := lelem / app.file_lines_max_t[app.current_file]
+					app.ctx.draw_text(rect_radius + offset_x, y, lelem, line_cfg)
+					if i == 1 {
+						fact := lelem#[..-2].f32() / app.file_lines_max_t[app.current_file]
 						length := fact * (off_x_inc - text_size)
 						app.ctx.draw_rect_filled(rect_radius + offset_x - length, y + text_size,
 							length, 2, total_time_bar)
-					} else if i == 2 && lelem is f32 {
-						fact := lelem / app.file_lines_max_t[app.current_file]
+					} else if i == 2 {
+						fact := lelem#[..-2].f32() / app.file_lines_max_t[app.current_file]
 						length := fact * (off_x_inc - text_size)
 						app.ctx.draw_rect_filled(rect_radius + offset_x - length, y + text_size,
 							length, 2, wo_callee_time_bar)
@@ -267,18 +257,15 @@ fn task_processor(pf_chan chan ProcessFile, pf_data_chan chan PfData, sf_chan ch
 				pf_data.sort_order = []Order{len: columns.len}
 				pf_data.max_t = 0
 				for line in raw_file_lines {
-					mut l := line.split_by_space().map(Data(it))
+					mut l := line.split_by_space()
 					if l.len != columns.len {
 						continue
 					}
 					for i, mut max in pf_data.max_l {
-						max = int_max(max, (l[i] as string).len)
+						max = int_max(max, l[i].len)
 					}
-					l[0] = (l[0] as string).int()
-					l[1] = (l[1] as string)#[..-2].f32()
-					pf_data.max_t = f32_max(pf_data.max_t, l[1] as f32)
-					l[2] = (l[2] as string)#[..-2].f32()
-					l[3] = (l[3] as string)#[..-2].int()
+					total_time := l[1]#[..-2].f32()
+					pf_data.max_t = f32_max(pf_data.max_t, total_time)
 					pf_data.file_lines << l
 				}
 				for i, mut max in pf_data.max_l {
@@ -288,18 +275,20 @@ fn task_processor(pf_chan chan ProcessFile, pf_data_chan chan PfData, sf_chan ch
 			}
 			task := <-sf_chan {
 				if task.column_idx < columns.len {
-					sf_data_chan <- SfData{task.file_idx, task.file_lines.sorted_with_compare(fn [task] (mut _a []Data, mut _b []Data) int {
-						a := if task.order == .asc {
-							_a[task.column_idx]
+					sf_data_chan <- SfData{task.file_idx, task.file_lines.sorted_with_compare(fn [task] (mut aaa []string, mut bbb []string) int {
+						aa := if task.order == .asc {
+							aaa[task.column_idx]
 						} else {
-							_b[task.column_idx]
+							bbb[task.column_idx]
 						}
-						b := if task.order == .asc {
-							_b[task.column_idx]
+						bb := if task.order == .asc {
+							bbb[task.column_idx]
 						} else {
-							_a[task.column_idx]
+							aaa[task.column_idx]
 						}
-						if a is int && b is int {
+						if task.column_idx == 0 || task.column_idx == 3 {
+							a := aa#[..-2].int()
+							b := bb#[..-2].int()
 							if a < b {
 								return -1
 							}
@@ -307,15 +296,17 @@ fn task_processor(pf_chan chan ProcessFile, pf_data_chan chan PfData, sf_chan ch
 								return 1
 							}
 						}
-						if a is string && b is string {
-							if a < b {
+						if task.column_idx == 4 {
+							if aa < bb {
 								return -1
 							}
-							if a > b {
+							if aa > bb {
 								return 1
 							}
 						}
-						if a is f32 && b is f32 {
+						if task.column_idx == 1 || task.column_idx == 2 {
+							a := aa#[..-2].f32()
+							b := bb#[..-2].f32()
 							if a < b {
 								return -1
 							}
