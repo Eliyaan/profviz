@@ -183,12 +183,12 @@ fn on_frame(mut app App) {
 					offset_x += off_x_inc
 					app.ctx.draw_text(rect_radius + offset_x, y, lelem, line_cfg)
 					if i == 1 {
-						fact := lelem#[..-2].f32() / app.file_lines_max_t[app.current_file]
+						fact := lelem.f32() / app.file_lines_max_t[app.current_file]
 						length := fact * (off_x_inc - text_size)
 						app.ctx.draw_rect_filled(rect_radius + offset_x - length, y + text_size,
 							length, 2, total_time_bar)
 					} else if i == 2 {
-						fact := lelem#[..-2].f32() / app.file_lines_max_t[app.current_file]
+						fact := lelem.f32() / app.file_lines_max_t[app.current_file]
 						length := fact * (off_x_inc - text_size)
 						app.ctx.draw_rect_filled(rect_radius + offset_x - length, y + text_size,
 							length, 2, wo_callee_time_bar)
@@ -264,7 +264,7 @@ fn task_processor(pf_chan chan ProcessFile, pf_data_chan chan PfData, sf_chan ch
 					for i, mut max in pf_data.max_l {
 						max = int_max(max, l[i].len)
 					}
-					total_time := l[1]#[..-2].f32()
+					total_time := l[1].f32()
 					pf_data.max_t = f32_max(pf_data.max_t, total_time)
 					pf_data.file_lines << l
 				}
@@ -305,8 +305,8 @@ fn task_processor(pf_chan chan ProcessFile, pf_data_chan chan PfData, sf_chan ch
 							}
 						}
 						if task.column_idx == 1 || task.column_idx == 2 {
-							a := aa#[..-2].f32()
-							b := bb#[..-2].f32()
+							a := aa.f32()
+							b := bb.f32()
 							if a < b {
 								return -1
 							}
